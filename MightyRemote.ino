@@ -7,6 +7,9 @@
 #include <IRutils.h>
 #include <IRsend.h>
 #include <EEPROM.h>
+#include <ESP8266WiFi.h>
+#include <WiFiManager.h>
+#include <ESP8266WebServer.h>
 
 // Configuration parameters
 const uint16_t kRecvPin = 14;  // IR receive pin
@@ -35,6 +38,10 @@ const uint8_t kTolerancePercentage = 25;  // Changed from undefined kTolerance
 IRrecv irrecv(kRecvPin, kCaptureBufferSize, kTimeout, true);
 decode_results results;
 
+// Web server and WiFiManager
+ESP8266WebServer server(80);
+WiFiManager wifiManager;
+
 void setup() {
     irsend.begin();
     Serial.begin(115200);
@@ -53,10 +60,19 @@ void setup() {
     
     irrecv.setTolerance(kTolerancePercentage);
     irrecv.enableIRIn();
+
+    // Connect to Wi-Fi using WiFiManager
+    wifiManager.autoConnect("IR_Remote_AP");
+
+    // Start the web server
+    server.on("/", handleRoot);
+    server.on("/sendIR", handleSendIR);
+    server.begin();
+    Serial.println("HTTP server started");
 }
 
 void loop() {
-    checkButton();
+    server.handleClient();
     
     if (irrecv.decode(&results)) {
         if (results.overflow) {
@@ -150,6 +166,7 @@ void storeRawDataToEEPROM(String data) {
     // Free the allocated memory
     delete[] rawData;
 }
+
 // Function to load raw data values from EEPROM
 void loadRawDataFromEEPROM(uint16_t*& rawData, int& length) {
     length = 0;
@@ -179,36 +196,41 @@ void loadRawDataFromEEPROM(uint16_t*& rawData, int& length) {
     }
 }
 
-void checkButton() {
-    if (Serial.available()) {
-        char input = Serial.read();
-        Serial.print("Received character: ");
-        Serial.println(input);
-        if (input == 'p') {
-            Serial.println("Sending IR signal...");
+// Web server handlers
+void handleRoot() {
+    String html = "<!DOCTYPE html><html><head><title>IR Remote Control</title></head><body>";
+    html += "<h1>IR Remote Control</h1>";
+    html += "<button onclick=\"sendIR()\">Send IR Signal</button>";
+    html += "<script>function sendIR() { fetch('/sendIR').then(response => response.text()).then(data => console.log(data)); }</script>";
+    html += "</body></html>";
+    server.send(200, "text/html", html);
+}
 
-            // Load raw data from EEPROM
-            uint16_t* rawData = nullptr;
-            int length;
-            loadRawDataFromEEPROM(rawData, length);
+void handleSendIR() {
+    Serial.println("Sending IR signal...");
 
-            if (rawData != nullptr) {
-                // Print the raw data for debugging
-                Serial.println("Raw Data: ");
-                for (int i = 0; i < length; i++) {
-                    Serial.print(rawData[i]);
-                    Serial.print(" ");
-                }
-                Serial.println();
+    // Load raw data from EEPROM
+    uint16_t* rawData = nullptr;
+    int length;
+    loadRawDataFromEEPROM(rawData, length);
 
-                // Send the raw IR data
-                irsend.sendRaw(rawData, length, 38);
-
-                // Free the allocated memory
-                delete[] rawData;
-            } else {
-                Serial.println("Error: Failed to load raw data from EEPROM!");
-            }
+    if (rawData != nullptr) {
+        // Print the raw data for debugging
+        Serial.println("Raw Data: ");
+        for (int i = 0; i < length; i++) {
+            Serial.print(rawData[i]);
+            Serial.print(" ");
         }
+        Serial.println();
+
+        // Send the raw IR data
+        irsend.sendRaw(rawData, length, 38);
+
+        // Free the allocated memory
+        delete[] rawData;
+
+        server.send(200, "text/plain", "IR Signal Sent");
+    } else {
+        server.send(500, "text/plain", "Error: Failed to load raw data from EEPROM!");
     }
 }
