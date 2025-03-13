@@ -6,22 +6,17 @@
 #include <IRtext.h>
 #include <IRutils.h>
 #include <IRsend.h>
-#include <EEPROM.h>
-#include <ESP8266WiFi.h>
-#include <WiFiManager.h>
-#include <ESP8266WebServer.h>
+#include <FS.h>  // Include the SPIFFS library
 
 // Configuration parameters
 const uint16_t kRecvPin = 14;  // IR receive pin
 #define IR_LED_PIN 12 
 IRsend irsend(IR_LED_PIN);  
-#define EEPROM_SIZE 512
-const int rawDataStartAddress = 0;  // Starting address in EEPROM to store the raw data
 
 // Communication settings
 const uint32_t kBaudRate = 115200;
 const uint16_t kCaptureBufferSize = 1024;
-const int maxRawDataLength = 100;  // Maximum number of raw data values per IR code
+const int maxRawDataLength = 300;  // Maximum number of raw data values per IR code
 
 // Protocol-specific timeouts
 #if DECODE_AC
@@ -38,14 +33,15 @@ const uint8_t kTolerancePercentage = 25;  // Changed from undefined kTolerance
 IRrecv irrecv(kRecvPin, kCaptureBufferSize, kTimeout, true);
 decode_results results;
 
-// Web server and WiFiManager
-ESP8266WebServer server(80);
-WiFiManager wifiManager;
-
 void setup() {
     irsend.begin();
     Serial.begin(115200);
-    EEPROM.begin(EEPROM_SIZE);  // Initialize EEPROM with the defined size
+
+    // Initialize SPIFFS
+    if (!SPIFFS.begin()) {
+        Serial.println("Failed to mount SPIFFS");
+        return;
+    }
 
     #ifdef ESP8266
     // Serial.begin(kBaudRate, SERIAL_8N1, SERIAL_TX_ONLY);
@@ -60,19 +56,10 @@ void setup() {
     
     irrecv.setTolerance(kTolerancePercentage);
     irrecv.enableIRIn();
-
-    // Connect to Wi-Fi using WiFiManager
-    wifiManager.autoConnect("IR_Remote_AP");
-
-    // Start the web server
-    server.on("/", handleRoot);
-    server.on("/sendIR", handleSendIR);
-    server.begin();
-    Serial.println("HTTP server started");
 }
 
 void loop() {
-    server.handleClient();
+    checkButton();
     
     if (irrecv.decode(&results)) {
         if (results.overflow) {
@@ -109,7 +96,7 @@ void loop() {
         int startIndex = rawDataStringTest.indexOf('{') + 1;
         int endIndex = rawDataStringTest.indexOf('}');
         String dataValues = rawDataStringTest.substring(startIndex, endIndex);
-        storeRawDataToEEPROM(dataValues);
+        storeRawDataToSPIFFS(dataValues);
 
         Serial.println();
         Serial.println();
@@ -117,8 +104,30 @@ void loop() {
     }
 }
 
-// Function to store raw data values as uint16_t in EEPROM
-void storeRawDataToEEPROM(String data) {
+// Function to store raw data values as uint16_t in SPIFFS
+void storeRawDataToSPIFFS(String data) {
+    File file = SPIFFS.open("/raw_data.txt", "w");
+    if (!file) {
+        Serial.println("Failed to open file for writing");
+        return;
+    }
+
+    file.print(data);
+    file.close();
+    Serial.println("Data stored in SPIFFS.");
+}
+
+// Function to load raw data values from SPIFFS
+void loadRawDataFromSPIFFS(uint16_t*& rawData, int& length) {
+    File file = SPIFFS.open("/raw_data.txt", "r");
+    if (!file) {
+        Serial.println("Failed to open file for reading");
+        return;
+    }
+
+    String data = file.readString();
+    file.close();
+
     // Count the number of raw data values
     int count = 0;
     for (int i = 0; i < data.length(); i++) {
@@ -127,7 +136,7 @@ void storeRawDataToEEPROM(String data) {
     count++;  // Add 1 for the last value
 
     // Dynamically allocate memory for rawData
-    uint16_t* rawData = new uint16_t[count];
+    rawData = new uint16_t[count];
     if (rawData == nullptr) {
         Serial.println("Error: Failed to allocate memory!");
         return;
@@ -148,89 +157,39 @@ void storeRawDataToEEPROM(String data) {
         token = strtok(nullptr, ",");
     }
 
-    // Check if there's enough space in EEPROM
-    if (rawDataStartAddress + (index * 2) > EEPROM_SIZE) {
-        Serial.println("Error: Not enough space in EEPROM!");
-        delete[] rawData;  // Free the allocated memory
-        return;
-    }
-
-    // Store raw data in EEPROM
-    for (int i = 0; i < index; i++) {
-        EEPROM.put(rawDataStartAddress + (i * 2), rawData[i]);  // Store each uint16_t value
-    }
-    EEPROM.put(rawDataStartAddress + (index * 2), (uint16_t)0xFFFF);  // End marker
-    EEPROM.commit();
-    Serial.println("Data stored in EEPROM.");
-
-    // Free the allocated memory
-    delete[] rawData;
+    length = index;
 }
 
-// Function to load raw data values from EEPROM
-void loadRawDataFromEEPROM(uint16_t*& rawData, int& length) {
-    length = 0;
-    uint16_t value;
-    int address = rawDataStartAddress;
+void checkButton() {
+    if (Serial.available()) {
+        char input = Serial.read();
+        Serial.print("Received character: ");
+        Serial.println(input);
+        if (input == 'p') {
+            Serial.println("Sending IR signal...");
 
-    // Count the number of values in EEPROM
-    while (true) {
-        EEPROM.get(address, value);  // Read a uint16_t value
-        if (value == 0xFFFF) break;  // Stop at end marker
-        length++;
-        address += 2;  // Move to the next uint16_t value
-    }
+            // Load raw data from SPIFFS
+            uint16_t* rawData = nullptr;
+            int length;
+            loadRawDataFromSPIFFS(rawData, length);
 
-    // Dynamically allocate memory for rawData
-    rawData = new uint16_t[length];
-    if (rawData == nullptr) {
-        Serial.println("Error: Failed to allocate memory!");
-        return;
-    }
+            if (rawData != nullptr) {
+                // Print the raw data for debugging
+                Serial.println("Raw Data: ");
+                for (int i = 0; i < length; i++) {
+                    Serial.print(rawData[i]);
+                    Serial.print(" ");
+                }
+                Serial.println();
 
-    // Read values into rawData
-    address = rawDataStartAddress;
-    for (int i = 0; i < length; i++) {
-        EEPROM.get(address, rawData[i]);
-        address += 2;
-    }
-}
+                // Send the raw IR data
+                irsend.sendRaw(rawData, length, 38);
 
-// Web server handlers
-void handleRoot() {
-    String html = "<!DOCTYPE html><html><head><title>IR Remote Control</title></head><body>";
-    html += "<h1>IR Remote Control</h1>";
-    html += "<button onclick=\"sendIR()\">Send IR Signal</button>";
-    html += "<script>function sendIR() { fetch('/sendIR').then(response => response.text()).then(data => console.log(data)); }</script>";
-    html += "</body></html>";
-    server.send(200, "text/html", html);
-}
-
-void handleSendIR() {
-    Serial.println("Sending IR signal...");
-
-    // Load raw data from EEPROM
-    uint16_t* rawData = nullptr;
-    int length;
-    loadRawDataFromEEPROM(rawData, length);
-
-    if (rawData != nullptr) {
-        // Print the raw data for debugging
-        Serial.println("Raw Data: ");
-        for (int i = 0; i < length; i++) {
-            Serial.print(rawData[i]);
-            Serial.print(" ");
+                // Free the allocated memory
+                delete[] rawData;
+            } else {
+                Serial.println("Error: Failed to load raw data from SPIFFS!");
+            }
         }
-        Serial.println();
-
-        // Send the raw IR data
-        irsend.sendRaw(rawData, length, 38);
-
-        // Free the allocated memory
-        delete[] rawData;
-
-        server.send(200, "text/plain", "IR Signal Sent");
-    } else {
-        server.send(500, "text/plain", "Error: Failed to load raw data from EEPROM!");
     }
 }
