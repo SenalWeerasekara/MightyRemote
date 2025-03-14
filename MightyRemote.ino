@@ -7,7 +7,7 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
-#include <EEPROM.h>  //
+#include <FS.h>  // Include the SPIFFS library
 
 // Pin configuration
 const uint16_t kRecvPin = 14;  // D5 on D1 Mini (GPIO 14)
@@ -41,9 +41,6 @@ const char* password = "TqPPsC49";
 
 ESP8266WebServer server(80);  // Create a web server on port 80
 
-// EEPROM configuration
-const int EEPROM_SIZE = sizeof(capturedSignals);  // Size of EEPROM storage needed
-
 void setup() {
   Serial.begin(kBaudRate, SERIAL_8N1);
   while (!Serial)  // Wait for the serial connection to be established.
@@ -51,11 +48,15 @@ void setup() {
 
   Serial.println("IR Capture and Replay Ready");
 
-  // Initialize EEPROM
-  EEPROM.begin(EEPROM_SIZE);
+  // Initialize SPIFFS
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to mount SPIFFS");
+    return;
+  }
+  Serial.println("SPIFFS mounted");
 
-  // Load saved signals from EEPROM
-  loadSignalsFromEEPROM();
+  // Load saved signals from SPIFFS
+  loadSignalsFromSPIFFS();
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
@@ -84,7 +85,7 @@ void setup() {
   server.on("/replay3", []() { handleReplay(2); });
   server.on("/replay4", []() { handleReplay(3); });
   server.on("/replay5", []() { handleReplay(4); });
-  server.on("/clear", handleClear);  // Route to clear EEPROM
+  server.on("/clear", handleClear);  // Route to clear SPIFFS
 
   // Start the web server
   server.begin();
@@ -109,16 +110,14 @@ void getSignal() {
         capturedSignals[i].value = results.value;
         capturedSignals[i].bits = results.bits;
         signalCaptured[i] = true;  // Set the flag to indicate a signal has been captured
-        
-        // Save the signal to EEPROM
-        saveSignalsToEEPROM();
+
+        // Save the signal to SPIFFS
+        saveSignalToSPIFFS(i);
 
         // Print the details of the captured signal
         Serial.print("Signal stored in slot ");
         Serial.println(i);
         Serial.print(resultToHumanReadableBasic(&results));
-
-      
 
         // Output the results as source code
         Serial.println(resultToSourceCode(&results));
@@ -133,22 +132,21 @@ void getSignal() {
 }
 
 void handleRoot() {
-   int totalEEPROM = 512;  // Total EEPROM size in bytes
-  int usedEEPROM = 0;
-  for (int i = 0; i < MAX_SIGNALS; i++) {
-    if (signalCaptured[i]) {
-      usedEEPROM += sizeof(IRSignal);
-    }
-  }
-  int availableEEPROM = totalEEPROM - usedEEPROM;
+  // Calculate SPIFFS usage
+  FSInfo fs_info;
+  SPIFFS.info(fs_info);
+  int totalSPIFFS = fs_info.totalBytes;
+  int usedSPIFFS = fs_info.usedBytes;
+  int availableSPIFFS = totalSPIFFS - usedSPIFFS;
+
   // HTML for the web UI
   String html = "<!DOCTYPE html><html><head><title>IR Capture and Replay</title></head><body>";
   html += "<h1>IR Capture and Replay</h1>";
-  html += "<p>EEPROM Usage:</p>";
+  html += "<p>SPIFFS Usage:</p>";
   html += "<ul>";
-  html += "<li>Total EEPROM: " + String(totalEEPROM) + " bytes</li>";
-  html += "<li>Used EEPROM: " + String(usedEEPROM) + " bytes</li>";
-  html += "<li>Available EEPROM: " + String(availableEEPROM) + " bytes</li>";
+  html += "<li>Total SPIFFS: " + String(totalSPIFFS) + " bytes</li>";
+  html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
+  html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
   html += "</ul>";
   html += "<p><a href=\"/capture1\"><button>Capture Signal 1</button></a></p>";
   html += "<p><a href=\"/capture2\"><button>Capture Signal 2</button></a></p>";
@@ -160,7 +158,7 @@ void handleRoot() {
   html += "<p><a href=\"/replay3\"><button>Replay Signal 3</button></a></p>";
   html += "<p><a href=\"/replay4\"><button>Replay Signal 4</button></a></p>";
   html += "<p><a href=\"/replay5\"><button>Replay Signal 5</button></a></p>";
-  html += "<p><a href=\"/clear\"><button style=\"background-color:red;color:white;\">Clear EEPROM</button></a></p>";
+  html += "<p><a href=\"/clear\"><button style=\"background-color:red;color:white;\">Clear SPIFFS</button></a></p>";
   html += "</body></html>";
 
   server.send(200, "text/html", html);
@@ -201,32 +199,12 @@ void handleReplay(int index) {
   }
 }
 
-void saveSignalsToEEPROM() {
-  // Write the capturedSignals array to EEPROM
-  for (int i = 0; i < MAX_SIGNALS; i++) {
-    int address = i * sizeof(IRSignal);
-    EEPROM.put(address, capturedSignals[i]);
-  }
-  EEPROM.commit();  // Save changes to EEPROM
-}
-
-void loadSignalsFromEEPROM() {
-  // Read the capturedSignals array from EEPROM
-  for (int i = 0; i < MAX_SIGNALS; i++) {
-    int address = i * sizeof(IRSignal);
-    EEPROM.get(address, capturedSignals[i]);
-    if (capturedSignals[i].protocol != UNKNOWN) {
-      signalCaptured[i] = true;  // Mark the slot as captured
-    }
-  }
-}
-
 void handleClear() {
-  // Clear the EEPROM
-  for (int i = 0; i < EEPROM_SIZE; i++) {
-    EEPROM.write(i, 0);  // Write 0 to every byte
+  // Clear all files in SPIFFS
+  Dir dir = SPIFFS.openDir("/");
+  while (dir.next()) {
+    SPIFFS.remove(dir.fileName());
   }
-  EEPROM.commit();  // Save changes to EEPROM
 
   // Reset the capturedSignals array and flags
   for (int i = 0; i < MAX_SIGNALS; i++) {
@@ -234,7 +212,34 @@ void handleClear() {
     signalCaptured[i] = false;  // Reset the flag
   }
 
-  Serial.println("EEPROM cleared!");
-  String html = "<script>alert('EEPROM cleared!'); window.location.href='/';</script>";
+  Serial.println("SPIFFS cleared!");
+  String html = "<script>alert('SPIFFS cleared!'); window.location.href='/';</script>";
   server.send(200, "text/html", html);
+}
+
+void saveSignalToSPIFFS(int index) {
+  String filename = "/signal" + String(index) + ".bin";
+  File file = SPIFFS.open(filename, "w");
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  file.write((uint8_t*)&capturedSignals[index], sizeof(IRSignal));
+  file.close();
+}
+
+void loadSignalsFromSPIFFS() {
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    String filename = "/signal" + String(i) + ".bin";
+    if (SPIFFS.exists(filename)) {
+      File file = SPIFFS.open(filename, "r");
+      if (!file) {
+        Serial.println("Failed to open file for reading");
+        return;
+      }
+      file.read((uint8_t*)&capturedSignals[i], sizeof(IRSignal));
+      file.close();
+      signalCaptured[i] = true;  // Mark the slot as captured
+    }
+  }
 }
