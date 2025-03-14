@@ -84,6 +84,7 @@ void setup() {
   server.on("/replay3", []() { handleReplay(2); });
   server.on("/replay4", []() { handleReplay(3); });
   server.on("/replay5", []() { handleReplay(4); });
+  server.on("/clear", handleClear);  // Route to clear EEPROM
 
   // Start the web server
   server.begin();
@@ -132,9 +133,23 @@ void getSignal() {
 }
 
 void handleRoot() {
+   int totalEEPROM = 512;  // Total EEPROM size in bytes
+  int usedEEPROM = 0;
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    if (signalCaptured[i]) {
+      usedEEPROM += sizeof(IRSignal);
+    }
+  }
+  int availableEEPROM = totalEEPROM - usedEEPROM;
   // HTML for the web UI
   String html = "<!DOCTYPE html><html><head><title>IR Capture and Replay</title></head><body>";
   html += "<h1>IR Capture and Replay</h1>";
+  html += "<p>EEPROM Usage:</p>";
+  html += "<ul>";
+  html += "<li>Total EEPROM: " + String(totalEEPROM) + " bytes</li>";
+  html += "<li>Used EEPROM: " + String(usedEEPROM) + " bytes</li>";
+  html += "<li>Available EEPROM: " + String(availableEEPROM) + " bytes</li>";
+  html += "</ul>";
   html += "<p><a href=\"/capture1\"><button>Capture Signal 1</button></a></p>";
   html += "<p><a href=\"/capture2\"><button>Capture Signal 2</button></a></p>";
   html += "<p><a href=\"/capture3\"><button>Capture Signal 3</button></a></p>";
@@ -145,6 +160,7 @@ void handleRoot() {
   html += "<p><a href=\"/replay3\"><button>Replay Signal 3</button></a></p>";
   html += "<p><a href=\"/replay4\"><button>Replay Signal 4</button></a></p>";
   html += "<p><a href=\"/replay5\"><button>Replay Signal 5</button></a></p>";
+  html += "<p><a href=\"/clear\"><button style=\"background-color:red;color:white;\">Clear EEPROM</button></a></p>";
   html += "</body></html>";
 
   server.send(200, "text/html", html);
@@ -203,4 +219,22 @@ void loadSignalsFromEEPROM() {
       signalCaptured[i] = true;  // Mark the slot as captured
     }
   }
+}
+
+void handleClear() {
+  // Clear the EEPROM
+  for (int i = 0; i < EEPROM_SIZE; i++) {
+    EEPROM.write(i, 0);  // Write 0 to every byte
+  }
+  EEPROM.commit();  // Save changes to EEPROM
+
+  // Reset the capturedSignals array and flags
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    capturedSignals[i] = {};  // Clear the struct
+    signalCaptured[i] = false;  // Reset the flag
+  }
+
+  Serial.println("EEPROM cleared!");
+  String html = "<script>alert('EEPROM cleared!'); window.location.href='/';</script>";
+  server.send(200, "text/html", html);
 }
