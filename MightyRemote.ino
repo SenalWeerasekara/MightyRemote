@@ -8,10 +8,12 @@
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <FS.h>  // Include the SPIFFS library
+#include <CuteBuzzerSounds.h>
 
 // Pin configuration
 const uint16_t kRecvPin = 14;  // D5 on D1 Mini (GPIO 14)
 const uint16_t kIrLedPin = 12; // D6 on D1 Mini (GPIO 12)
+#define BUZZER_PIN 13
 
 // IR configuration
 const uint32_t kBaudRate = 115200;
@@ -47,6 +49,7 @@ void setup() {
     delay(50);
 
   Serial.println("IR Capture and Replay Ready");
+  cute.init(BUZZER_PIN);
 
   // Initialize SPIFFS
   if (!SPIFFS.begin()) {
@@ -66,8 +69,10 @@ void setup() {
   }
   Serial.println("Connected to WiFi");
   Serial.println(WiFi.localIP());
+  cute.play(S_MODE3);
 
   // Start the IR sender
+
   irsend.begin();
 
   // Disable the IR receiver by default
@@ -90,6 +95,7 @@ void setup() {
   // Start the web server
   server.begin();
   Serial.println("HTTP server started");
+
 }
 
 void loop() {
@@ -101,6 +107,7 @@ void getSignal() {
   // Check if an IR signal has been captured
   if (irrecv.decode(&results)) {
     Serial.println("IR CAPTURED");
+    cute.play(S_DISCONNECTION);
 
     // Find the first available slot to store the signal
     for (int i = 0; i < MAX_SIGNALS; i++) {
@@ -190,14 +197,17 @@ void handleReplay(int index) {
         break;
     }
     Serial.println("Signal replayed!");
+    cute.play(S_CONNECTION);
     server.send(204);  // Send an empty response to the browser
   } else {
     String html = "<script>alert('No saved signal in slot " + String(index + 1) + "!'); window.location.href='/';</script>";
     Serial.print("No IR signal captured yet in slot ");
+    cute.play(S_SLEEPING); 
     Serial.println(index);
     server.send(200, "text/html", html);
   }
 }
+
 
 void handleClear() {
   // Clear all files in SPIFFS
@@ -214,6 +224,7 @@ void handleClear() {
 
   Serial.println("SPIFFS cleared!");
   String html = "<script>alert('SPIFFS cleared!'); window.location.href='/';</script>";
+  cute.play(S_SAD);
   server.send(200, "text/html", html);
 }
 
