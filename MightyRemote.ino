@@ -7,13 +7,20 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
+#include <WiFiManager.h>  // Include WiFiManager library
 #include <FS.h>  // Include the SPIFFS library
 #include <CuteBuzzerSounds.h>
 
 // Pin configuration
 const uint16_t kRecvPin = 14;  // D5 on D1 Mini (GPIO 14)
 const uint16_t kIrLedPin = 12; // D6 on D1 Mini (GPIO 12)
+const int MAX_SIGNALS = 20;  // Maximum number of signals to store
+
 #define BUZZER_PIN 13
+#define LED_PIN 2  // D4 on NodeMCU (GPIO 2)
+#define BUTTON_PIN 5  // D1 on NodeMCU (GPIO 5)
+
+WiFiManager wifiManager; 
 
 // IR configuration
 const uint32_t kBaudRate = 115200;
@@ -33,13 +40,14 @@ struct IRSignal {
   uint16_t bits;           // Number of bits
 };
 
-const int MAX_SIGNALS = 5;  // Maximum number of signals to store
+struct ButtonNames {
+  String captureButtonNames[MAX_SIGNALS];
+};
+
+ButtonNames buttonNames;  // Global variable to store button names
+
 IRSignal capturedSignals[MAX_SIGNALS];  // Array to store multiple signals
 bool signalCaptured[MAX_SIGNALS] = {false};  // Flags to indicate if signals are captured
-
-// Wi-Fi configuration
-const char* ssid = "SLT-Fiber-An8kf-2.4G";
-const char* password = "TqPPsC49";
 
 ESP8266WebServer server(80);  // Create a web server on port 80
 
@@ -51,6 +59,12 @@ void setup() {
   Serial.println("IR Capture and Replay Ready");
   cute.init(BUZZER_PIN);
 
+  // Initialize LED pin
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);  
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Use internal pull-up resistor
+
   // Initialize SPIFFS
   if (!SPIFFS.begin()) {
     Serial.println("Failed to mount SPIFFS");
@@ -61,18 +75,23 @@ void setup() {
   // Load saved signals from SPIFFS
   loadSignalsFromSPIFFS();
 
-  // Connect to Wi-Fi
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
+    // Initialize default button names if not already set
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    buttonNames.captureButtonNames[i] = "btn " + String(i + 1);  // Default names: btn 1, btn 2, etc.
   }
+
+  loadButtonNamesFromSPIFFS();
+
+   // Connect to Wi-Fi using WiFiManager
+  Serial.println("Connecting to WiFi...");
+  wifiManager.autoConnect("MightyRemoteAP");  // Create an access point with the name "IRCaptureReplayAP"
+
   Serial.println("Connected to WiFi");
   Serial.println(WiFi.localIP());
+  digitalWrite(LED_PIN, LOW); 
   cute.play(S_MODE3);
 
   // Start the IR sender
-
   irsend.begin();
 
   // Disable the IR receiver by default
@@ -80,27 +99,52 @@ void setup() {
 
   // Define web server routes
   server.on("/", handleRoot);
-  server.on("/capture1", []() { handleCapture(0); });
-  server.on("/capture2", []() { handleCapture(1); });
-  server.on("/capture3", []() { handleCapture(2); });
-  server.on("/capture4", []() { handleCapture(3); });
-  server.on("/capture5", []() { handleCapture(4); });
-  server.on("/replay1", []() { handleReplay(0); });
-  server.on("/replay2", []() { handleReplay(1); });
-  server.on("/replay3", []() { handleReplay(2); });
-  server.on("/replay4", []() { handleReplay(3); });
-  server.on("/replay5", []() { handleReplay(4); });
+  // Define web server routes using a loop
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    // Capture routes
+    server.on("/capture" + String(i + 1), [i]() { handleCapture(i); });
+    // Replay routes
+    server.on("/replay" + String(i + 1), [i]() { handleReplay(i); });
+  }
   server.on("/clear", handleClear);  // Route to clear SPIFFS
+  server.on("/settings", handleSettings);
+  server.on("/settings", handleSettings);
+  server.on("/saveButtonName", handleSaveButtonName);  
 
   // Start the web server
   server.begin();
   Serial.println("HTTP server started");
-
 }
 
 void loop() {
   server.handleClient();  // Handle client requests
   getSignal();  // Check for IR signals
+
+  // Check WiFi connection status and control LED
+  if (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(LED_PIN, HIGH);  // Turn on LED if not connected to WiFi
+    Serial.println("WiFi disconnected. Attempting to reconnect...");
+    wifiManager.autoConnect("MightyRemoteAP");  // Attempt to reconnect
+    if (WiFi.status() == WL_CONNECTED) {
+      digitalWrite(LED_PIN, LOW);  // Turn off LED if reconnected
+      Serial.println("Reconnected to WiFi");
+    }
+  } else {
+    digitalWrite(LED_PIN, LOW);  
+  }
+
+  // Check if the button is pressed to start AP mode
+  if (digitalRead(BUTTON_PIN) == LOW) {  // Button is pressed (LOW because of pull-up)
+    delay(50);  // Simple debounce delay
+    if (digitalRead(BUTTON_PIN) == LOW) {  // Confirm button is still pressed
+      Serial.println("Button pressed. Starting AP mode...");
+      digitalWrite(LED_PIN, HIGH);
+      cute.play(S_SAD);
+      wifiManager.resetSettings();  // Reset saved WiFi settings
+      wifiManager.startConfigPortal("MightyRemoteAP");  // Start the configuration portal
+      Serial.println("AP mode started. Connect to 'MightyRemoteAP' to configure WiFi.");
+    }
+  }
 }
 
 void getSignal() {
@@ -139,35 +183,53 @@ void getSignal() {
 }
 
 void handleRoot() {
-  // Calculate SPIFFS usage
+  // HTML for the web UI
+  String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>MightyRemote</title></head><body>";
+  html += "<h1>≽^•⩊•^≼ Mighty Remote </h1>";
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    html += "<p><a href=\"/replay" + String(i + 1) + "\"><button>" + buttonNames.captureButtonNames[i] + "</button></a></p>";
+  }
+  html += "<p><a href=\"/settings\"><button>Go to Settings</button></a></p>";
+  html += "</body></html>";
+
+  server.send(200, "text/html", html);
+}
+
+void handleSettings() {
+    // Calculate SPIFFS usage
   FSInfo fs_info;
   SPIFFS.info(fs_info);
   int totalSPIFFS = fs_info.totalBytes;
   int usedSPIFFS = fs_info.usedBytes;
   int availableSPIFFS = totalSPIFFS - usedSPIFFS;
 
-  // HTML for the web UI
-  String html = "<!DOCTYPE html><html><head><title>IR Capture and Replay</title></head><body>";
-  html += "<h1>IR Capture and Replay</h1>";
+  // HTML for the settings page
+  String html = "<!DOCTYPE html><html><head><title>Settings - IR Capture and Replay</title></head><body>";
+  html += "<h1>Settings - IR Capture and Replay</h1>";
   html += "<p>SPIFFS Usage:</p>";
   html += "<ul>";
   html += "<li>Total SPIFFS: " + String(totalSPIFFS) + " bytes</li>";
   html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
   html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
   html += "</ul>";
-  html += "<p><a href=\"/capture1\"><button>Capture Signal 1</button></a></p>";
-  html += "<p><a href=\"/capture2\"><button>Capture Signal 2</button></a></p>";
-  html += "<p><a href=\"/capture3\"><button>Capture Signal 3</button></a></p>";
-  html += "<p><a href=\"/capture4\"><button>Capture Signal 4</button></a></p>";
-  html += "<p><a href=\"/capture5\"><button>Capture Signal 5</button></a></p>";
-  html += "<p><a href=\"/replay1\"><button>Replay Signal 1</button></a></p>";
-  html += "<p><a href=\"/replay2\"><button>Replay Signal 2</button></a></p>";
-  html += "<p><a href=\"/replay3\"><button>Replay Signal 3</button></a></p>";
-  html += "<p><a href=\"/replay4\"><button>Replay Signal 4</button></a></p>";
-  html += "<p><a href=\"/replay5\"><button>Replay Signal 5</button></a></p>";
+  html += "<h2>Capture IR Signals</h2>";
   html += "<p><a href=\"/clear\"><button style=\"background-color:red;color:white;\">Clear SPIFFS</button></a></p>";
+  html += "<p>Please perform a power cycle once the storage is cleared!</p>";
+  
+  for (int i = 0; i < MAX_SIGNALS; i++) {
+    html += "<p>";
+    html += "<form action=\"/saveButtonName\" method=\"POST\">";
+    html += "<input type=\"hidden\" name=\"index\" value=\"" + String(i) + "\">";
+    html += "<label for=\"buttonName" + String(i) + "\">Capture Signal " + String(i + 1) + " Name:</label>";
+    html += "<input type=\"text\" id=\"buttonName" + String(i) + "\" name=\"buttonName\" value=\"" + buttonNames.captureButtonNames[i] + "\">";
+    html += "<button type=\"submit\">Save</button>";
+    html += "</form>";
+    html += "<a href=\"/capture" + String(i + 1) + "\"><button>Capture Signal " + String(i + 1) + "</button></a>";
+    html += "</p>";
+  }
+  
+  html += "<p><a href=\"/\"><button>Back to Main</button></a></p>";
   html += "</body></html>";
-
   server.send(200, "text/html", html);
 }
 
@@ -229,7 +291,7 @@ void handleClear() {
 }
 
 void saveSignalToSPIFFS(int index) {
-  String filename = "/signal" + String(index) + ".bin";
+  String filename = "/signalFile" + String(index) + ".bin";
   File file = SPIFFS.open(filename, "w");
   if (!file) {
     Serial.println("Failed to open file for writing");
@@ -241,7 +303,7 @@ void saveSignalToSPIFFS(int index) {
 
 void loadSignalsFromSPIFFS() {
   for (int i = 0; i < MAX_SIGNALS; i++) {
-    String filename = "/signal" + String(i) + ".bin";
+    String filename = "/signalFile" + String(i) + ".bin";
     if (SPIFFS.exists(filename)) {
       File file = SPIFFS.open(filename, "r");
       if (!file) {
@@ -252,5 +314,41 @@ void loadSignalsFromSPIFFS() {
       file.close();
       signalCaptured[i] = true;  // Mark the slot as captured
     }
+  }
+}
+
+void handleSaveButtonName() {
+  if (server.method() == HTTP_POST) {
+    int index = server.arg("index").toInt();
+    String newName = server.arg("buttonName");
+    if (index >= 0 && index < MAX_SIGNALS) {
+      buttonNames.captureButtonNames[index] = newName;
+      saveButtonNamesToSPIFFS();
+      Serial.println("Button name saved: " + newName);
+    }
+  }
+  server.sendHeader("Location", "/settings");
+  server.send(303);
+}
+
+void saveButtonNamesToSPIFFS() {
+  File file = SPIFFS.open("/buttonNames.bin", "w");
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  file.write((uint8_t*)&buttonNames, sizeof(ButtonNames));
+  file.close();
+}
+
+void loadButtonNamesFromSPIFFS() {
+  if (SPIFFS.exists("/buttonNames.bin")) {
+    File file = SPIFFS.open("/buttonNames.bin", "r");
+    if (!file) {
+      Serial.println("Failed to open file for reading");
+      return;
+    }
+    file.read((uint8_t*)&buttonNames, sizeof(ButtonNames));
+    file.close();
   }
 }
