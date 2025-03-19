@@ -19,6 +19,29 @@ const uint16_t kIrLedPin = 12; // D6 on D1 Mini (GPIO 12)
 #define BUTTON_PIN 5  // D1 on NodeMCU (GPIO 5)
 int currentCaptureSlot = -1;
 
+// const String backgroundColor = "#2a1a2f"; // Dark background
+// const String containerColor = "#3b1c2a"; // Slightly lighter dark container
+// const String buttonColor = "#ff7f50"; // Amber color for buttons
+// const String buttonHoverColor = "#e66a3d"; // Darker amber for hover
+// const String buttonActiveColor = "#cc5730"; // Even darker amber for active state
+// const String settingsButtonColor = "#4a4a4a"; // Dark grey for settings button
+// const String settingsButtonHoverColor = "#3d3d3d"; // Darker grey for settings button hover
+// const String settingsButtonActiveColor = "#333333"; // Even darker grey for settings button active state
+// const String textColor = "#ffffff"; // White text color
+
+const String backgroundColor = "#1a1a1a"; // Almost Black
+const String containerColor = "#262626"; // Dark Grey
+const String buttonColor = "#00bcd4"; // Bright Teal
+const String buttonHoverColor = "#0097a7"; // Darker Teal
+const String buttonActiveColor = "#00838f"; // Even Darker Teal
+const String settingsButtonColor = "#424242"; // Medium Grey
+const String settingsButtonHoverColor = "#373737"; // Darker Grey
+const String settingsButtonActiveColor = "#2e2e2e"; // Even Darker Grey
+const String textColor = "#ffffff"; // White
+const String inputBackgroundColor = "#2a2a3f"; // Darker Grey for input fields
+const String inputBorderColor = "#444"; // Grey for input borders
+const String inputFocusBorderColor = "#00bcd4"; // Teal for input focus
+
 const int MAX_SIGNALS = 20;  // Maximum number of signals to store
 
 WiFiManager wifiManager; 
@@ -42,7 +65,7 @@ struct IRSignal {
 };
 
 struct ButtonNames {
-  String captureButtonNames[MAX_SIGNALS];
+  char captureButtonNames[MAX_SIGNALS][32];
 };
 
 ButtonNames buttonNames;  // Global variable to store button names
@@ -78,7 +101,8 @@ void setup() {
 
     // Initialize default button names if not already set
   for (int i = 0; i < MAX_SIGNALS; i++) {
-    buttonNames.captureButtonNames[i] = "btn " + String(i + 1);  // Default names: btn 1, btn 2, etc.
+    String defaultName = "btn " + String(i + 1);  // Create a String object
+    defaultName.toCharArray(buttonNames.captureButtonNames[i], 32);
   }
 
   loadButtonNamesFromSPIFFS();
@@ -184,53 +208,101 @@ void getSignal() {
 }
 
 void handleRoot() {
-  // Calculate SPIFFS usage
-  FSInfo fs_info;
-  SPIFFS.info(fs_info);
-  int totalSPIFFS = fs_info.totalBytes;
-  int usedSPIFFS = fs_info.usedBytes;
-  int availableSPIFFS = totalSPIFFS - usedSPIFFS;
-
-  // HTML for the web UI
-  String html = "<!DOCTYPE html><html><head><title>IR Capture and Replay</title></head><body>";
-  html += "<h1>IR Capture and Replay</h1>";
-  html += "<p>SPIFFS Usage:</p>";
-  html += "<ul>";
-  html += "<li>Total SPIFFS: " + String(totalSPIFFS) + " bytes</li>";
-  html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
-  html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
-  html += "</ul>";
-  html += "<h2>Replay Signals</h2>";
+  // HTML for the web UI with a modern and beautiful design
+  String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";
+  html += "<title>𓃠 MightyRemote</title>";
+  html += "<style>";
+  html += "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: " + backgroundColor + "; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 10vh; }";
+  html += "h2 { color: " + textColor + "; margin-bottom: 20px; font-size: 2rem; font-weight: 600; }";
+  html += ".remote-container { background-color: " + containerColor + "; padding: 25px; border-radius: 20px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3); width: 100%; max-width: 600px; }";
+  html += ".remote-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }";
+  html += ".remote-topBar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }"; 
+  html += "a { text-decoration: none; }";
+  html += "button { background-color: " + buttonColor + "; color: " + textColor + "; border: none; padding: 20px 10px; text-align: center; font-size: 16px; font-weight: 500; cursor: pointer; border-radius: 12px; width: 100%; transition: background-color 0.3s ease, transform 0.1s ease; }";
+  html += "button:hover { background-color: " + buttonHoverColor + "; }";
+  html += "button:active { background-color: " + buttonActiveColor + "; transform: scale(0.95); }";
+  html += ".settings-button { grid-column: span 3; background-color: " + settingsButtonColor + "; color: " + textColor + "; border: none; padding: 20px 10px; text-align: center; font-size: 16px; font-weight: 500; cursor: pointer; border-radius: 12px; width: 100%; transition: background-color 0.3s ease, transform 0.1s ease; }";
+  html += ".settings-button:hover { background-color: " + settingsButtonHoverColor + "; }";
+  html += ".settings-button:active { background-color: " + settingsButtonActiveColor + "; transform: scale(0.95); }";
+  html += "@media (max-width: 600px) { .remote-grid { grid-template-columns: repeat(2, 1fr); } .settings-button { grid-column: span 2; } }";
+  html += "</style>";
+  html += "</head><body>";
+  html += "<div class=\"remote-container\">";
+  html += "<div class=\"remote-topBar\">";
+  html += "<h2>MightyRemote</h2>";
+  html += "<h2>𓃠</h2>";
+  html += "</div>";
+  html += "<div class=\"remote-grid\">";
   for (int i = 0; i < MAX_SIGNALS; i++) {
-    html += "<p><a href=\"/replay" + String(i + 1) + "\"><button>" + buttonNames.captureButtonNames[i] + "</button></a></p>";
+    html += "<a href=\"/replay" + String(i + 1) + "\"><button>" + String(buttonNames.captureButtonNames[i]) + "</button></a>";
   }
-  html += "<p><a href=\"/settings\"><button>Go to Settings</button></a></p>";
+  html += "<a href=\"/settings\"><button class=\"settings-button\">Settings</button></a>";
+  html += "</div>";
+  html += "</div>";
   html += "</body></html>";
 
   server.send(200, "text/html", html);
 }
 
 void handleSettings() {
-  // HTML for the settings page
-  String html = "<!DOCTYPE html><html><head><title>Settings - IR Capture and Replay</title></head><body>";
-  html += "<h1>Settings - IR Capture and Replay</h1>";
+  // SPIFFS calculation part
+  FSInfo fs_info;
+  SPIFFS.info(fs_info);
+  int totalSPIFFS = fs_info.totalBytes;
+  int usedSPIFFS = fs_info.usedBytes;
+  int availableSPIFFS = totalSPIFFS - usedSPIFFS;
+
+  String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";
+  html += "<title>𓃠 MightyRemote - Settings</title>";
+  html += "<style>";
+  html += "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: " + backgroundColor + "; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; color: " + textColor + "; }";
+  html += "h1 { font-size: 2rem; font-weight: 600; margin-bottom: 20px; }";
+  html += "h2 { font-size: 1.5rem; font-weight: 500; margin-bottom: 15px; }";
+  html += "p { margin: 10px 0; }";
+  html += "ul { list-style-type: none; padding: 0; margin: 0 0 20px 0; }";
+  html += "li { margin: 5px 0; }";
+  html += "a { text-decoration: none; }";
+  html += "button { background-color: " + buttonColor + "; color: " + textColor + "; border: none; padding: 10px 20px; text-align: center; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 8px; transition: background-color 0.3s ease, transform 0.1s ease; }";
+  html += "button:hover { background-color: " + buttonHoverColor + "; }";
+  html += "button:active { background-color: " + buttonActiveColor + "; transform: scale(0.95); }";
+  html += "button[style*=\"background-color:red\"] { background-color: #ff4757; }";
+  html += "button[style*=\"background-color:red\"]:hover { background-color: #ff6b81; }";
+  html += "button[style*=\"background-color:red\"]:active { background-color: #ff4757; }";
+  html += "form { display: flex; align-items: center; gap: 10px; margin: 10px 0; }";
+  html += "input[type=\"text\"] { padding: 8px; border: 1px solid " + inputBorderColor + "; border-radius: 8px; background-color: " + inputBackgroundColor + "; color: " + textColor + "; font-size: 14px; width: 200px; }";
+  html += "input[type=\"text\"]:focus { outline: none; border-color: " + inputFocusBorderColor + "; }";
+  html += ".container { background-color: " + containerColor + "; padding: 25px; border-radius: 20px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3); width: 100%; max-width: 600px; }";
+  html += ".button-group { display: flex; gap: 10px; margin: 10px 0; }"; // Added CSS for button group
+  html += "</style>";
+  html += "</head><body>";
+  html += "<div class=\"container\">";
+  html += "<h1>𓃠 MightyRemote - Settings</h1>";
+  html += "<h2>SPIFFS Memory Usage</h2>";
+  html += "<ul>";
+  html += "<li>Total SPIFFS: " + String(totalSPIFFS) + " bytes</li>";
+  html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
+  html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
+  html += "</ul>";
+
+  // Wrap buttons in a div with class "button-group"
+  html += "<div class=\"button-group\">";
+  html += "<a href=\"/\"><button>Back to Main</button></a>";
+  html += "<a href=\"/clear\"><button style=\"background-color:red;\">Clear SPIFFS</button></a>";
+  html += "</div>";
+
   html += "<h2>Capture IR Signals</h2>";
-  html += "<p><a href=\"/clear\"><button style=\"background-color:red;color:white;\">Clear SPIFFS</button></a></p>";
-  
   for (int i = 0; i < MAX_SIGNALS; i++) {
-    html += "<p>";
     html += "<form action=\"/saveButtonName\" method=\"POST\">";
     html += "<input type=\"hidden\" name=\"index\" value=\"" + String(i) + "\">";
-    html += "<label for=\"buttonName" + String(i) + "\">Capture Signal " + String(i + 1) + " Name:</label>";
-    html += "<input type=\"text\" id=\"buttonName" + String(i) + "\" name=\"buttonName\" value=\"" + buttonNames.captureButtonNames[i] + "\">";
+    html += "<label for=\"buttonName" + String(i) + "\">Button " + String(i + 1) + " Name:</label>";
+    html += "<input type=\"text\" id=\"buttonName" + String(i) + "\" name=\"buttonName\" value=\"" + String(buttonNames.captureButtonNames[i]) + "\">";
     html += "<button type=\"submit\">Save</button>";
     html += "</form>";
-    html += "<a href=\"/capture" + String(i + 1) + "\"><button>Capture Signal " + String(i + 1) + "</button></a>";
-    html += "</p>";
+    html += "<p><a href=\"/capture" + String(i + 1) + "\"><button>Capture Signal " + String(i + 1) + "</button></a></p>";
   }
-  
-  html += "<p><a href=\"/\"><button>Back to Main</button></a></p>";
+  html += "</div>";
   html += "</body></html>";
+
   server.send(200, "text/html", html);
 }
 
@@ -323,10 +395,12 @@ void handleSaveButtonName() {
   if (server.method() == HTTP_POST) {
     int index = server.arg("index").toInt();
     String newName = server.arg("buttonName");
-    if (index >= 0 && index < MAX_SIGNALS) {
-      buttonNames.captureButtonNames[index] = newName;
+    if (index >= 0 && index < MAX_SIGNALS && newName.length() < 32) {  // Ensure the name fits
+      newName.toCharArray(buttonNames.captureButtonNames[index], 32);  // Copy the string into the char array
       saveButtonNamesToSPIFFS();
       Serial.println("Button name saved: " + newName);
+    } else {
+      Serial.println("Invalid button name or index.");
     }
   }
   server.sendHeader("Location", "/settings");
@@ -352,5 +426,14 @@ void loadButtonNamesFromSPIFFS() {
     }
     file.read((uint8_t*)&buttonNames, sizeof(ButtonNames));
     file.close();
+    Serial.println("Button names loaded from SPIFFS.");
+  } else {
+    Serial.println("No button names file found. Initializing default names.");
+    for (int i = 0; i < MAX_SIGNALS; i++) {
+      String defaultName = "btn " + String(i + 1);
+      defaultName.toCharArray(buttonNames.captureButtonNames[i], 32);  // Copy the default name into the char array
+    }
+    saveButtonNamesToSPIFFS();  // Save the default names to SPIFFS
   }
 }
+
