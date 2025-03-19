@@ -14,11 +14,12 @@
 // Pin configuration
 const uint16_t kRecvPin = 14;  // D5 on D1 Mini (GPIO 14)
 const uint16_t kIrLedPin = 12; // D6 on D1 Mini (GPIO 12)
-const int MAX_SIGNALS = 20;  // Maximum number of signals to store
-
 #define BUZZER_PIN 13
 #define LED_PIN 2  // D4 on NodeMCU (GPIO 2)
 #define BUTTON_PIN 5  // D1 on NodeMCU (GPIO 5)
+int currentCaptureSlot = -1;
+
+const int MAX_SIGNALS = 20;  // Maximum number of signals to store
 
 WiFiManager wifiManager; 
 
@@ -99,10 +100,10 @@ void setup() {
 
   // Define web server routes
   server.on("/", handleRoot);
-  // Define web server routes using a loop
-  for (int i = 0; i < MAX_SIGNALS; i++) {
+for (int i = 0; i < MAX_SIGNALS; i++) {
     // Capture routes
     server.on("/capture" + String(i + 1), [i]() { handleCapture(i); });
+
     // Replay routes
     server.on("/replay" + String(i + 1), [i]() { handleReplay(i); });
   }
@@ -153,39 +154,53 @@ void getSignal() {
     Serial.println("IR CAPTURED");
     cute.play(S_DISCONNECTION);
 
-    // Find the first available slot to store the signal
-    for (int i = 0; i < MAX_SIGNALS; i++) {
-      if (!signalCaptured[i]) {
-        // Store the captured signal details in the array
-        capturedSignals[i].protocol = results.decode_type;
-        capturedSignals[i].value = results.value;
-        capturedSignals[i].bits = results.bits;
-        signalCaptured[i] = true;  // Set the flag to indicate a signal has been captured
+    // Check if a capture slot is active
+    if (currentCaptureSlot != -1) {
+      // Store the captured signal details in the current capture slot
+      capturedSignals[currentCaptureSlot].protocol = results.decode_type;
+      capturedSignals[currentCaptureSlot].value = results.value;
+      capturedSignals[currentCaptureSlot].bits = results.bits;
+      signalCaptured[currentCaptureSlot] = true;  // Set the flag to indicate a signal has been captured
 
-        // Save the signal to SPIFFS
-        saveSignalToSPIFFS(i);
+      // Save the signal to SPIFFS
+      saveSignalToSPIFFS(currentCaptureSlot);
 
-        // Print the details of the captured signal
-        Serial.print("Signal stored in slot ");
-        Serial.println(i);
-        Serial.print(resultToHumanReadableBasic(&results));
+      // Print the details of the captured signal
+      Serial.print("Signal stored in slot ");
+      Serial.println(currentCaptureSlot);
+      Serial.print(resultToHumanReadableBasic(&results));
 
-        // Output the results as source code
-        Serial.println(resultToSourceCode(&results));
-        Serial.println();  // Blank line between entries
+      // Output the results as source code
+      Serial.println(resultToSourceCode(&results));
+      Serial.println();  // Blank line between entries
 
-        // Disable the IR receiver after capturing a signal
-        irrecv.disableIRIn();
-        break;
-      }
+      // Reset the current capture slot
+      currentCaptureSlot = -1;
     }
+
+    // Disable the IR receiver after capturing a signal
+    irrecv.disableIRIn();
   }
 }
 
 void handleRoot() {
+  // Calculate SPIFFS usage
+  FSInfo fs_info;
+  SPIFFS.info(fs_info);
+  int totalSPIFFS = fs_info.totalBytes;
+  int usedSPIFFS = fs_info.usedBytes;
+  int availableSPIFFS = totalSPIFFS - usedSPIFFS;
+
   // HTML for the web UI
-  String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>MightyRemote</title></head><body>";
-  html += "<h1>≽^•⩊•^≼ Mighty Remote </h1>";
+  String html = "<!DOCTYPE html><html><head><title>IR Capture and Replay</title></head><body>";
+  html += "<h1>IR Capture and Replay</h1>";
+  html += "<p>SPIFFS Usage:</p>";
+  html += "<ul>";
+  html += "<li>Total SPIFFS: " + String(totalSPIFFS) + " bytes</li>";
+  html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
+  html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
+  html += "</ul>";
+  html += "<h2>Replay Signals</h2>";
   for (int i = 0; i < MAX_SIGNALS; i++) {
     html += "<p><a href=\"/replay" + String(i + 1) + "\"><button>" + buttonNames.captureButtonNames[i] + "</button></a></p>";
   }
@@ -196,25 +211,11 @@ void handleRoot() {
 }
 
 void handleSettings() {
-    // Calculate SPIFFS usage
-  FSInfo fs_info;
-  SPIFFS.info(fs_info);
-  int totalSPIFFS = fs_info.totalBytes;
-  int usedSPIFFS = fs_info.usedBytes;
-  int availableSPIFFS = totalSPIFFS - usedSPIFFS;
-
   // HTML for the settings page
   String html = "<!DOCTYPE html><html><head><title>Settings - IR Capture and Replay</title></head><body>";
   html += "<h1>Settings - IR Capture and Replay</h1>";
-  html += "<p>SPIFFS Usage:</p>";
-  html += "<ul>";
-  html += "<li>Total SPIFFS: " + String(totalSPIFFS) + " bytes</li>";
-  html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
-  html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
-  html += "</ul>";
   html += "<h2>Capture IR Signals</h2>";
   html += "<p><a href=\"/clear\"><button style=\"background-color:red;color:white;\">Clear SPIFFS</button></a></p>";
-  html += "<p>Please perform a power cycle once the storage is cleared!</p>";
   
   for (int i = 0; i < MAX_SIGNALS; i++) {
     html += "<p>";
@@ -236,6 +237,7 @@ void handleSettings() {
 void handleCapture(int index) {
   Serial.print("Listening for IR signal for slot ");
   Serial.println(index);
+  currentCaptureSlot = index;  // Set the current capture slot
   signalCaptured[index] = false;  // Reset the flag for this slot
   irrecv.enableIRIn();  // Enable the IR receiver
   String html = "<script>alert('Listening for IR signal for slot " + String(index + 1) + "...'); window.location.href='/';</script>";
@@ -291,7 +293,7 @@ void handleClear() {
 }
 
 void saveSignalToSPIFFS(int index) {
-  String filename = "/signalFile" + String(index) + ".bin";
+  String filename = "/signal" + String(index) + ".bin";
   File file = SPIFFS.open(filename, "w");
   if (!file) {
     Serial.println("Failed to open file for writing");
@@ -303,7 +305,7 @@ void saveSignalToSPIFFS(int index) {
 
 void loadSignalsFromSPIFFS() {
   for (int i = 0; i < MAX_SIGNALS; i++) {
-    String filename = "/signalFile" + String(i) + ".bin";
+    String filename = "/signal" + String(i) + ".bin";
     if (SPIFFS.exists(filename)) {
       File file = SPIFFS.open(filename, "r");
       if (!file) {
