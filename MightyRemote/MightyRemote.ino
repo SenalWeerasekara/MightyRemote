@@ -7,19 +7,21 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h>  // WiFiManager library
+#include <WiFiManager.h> 
 #include <FS.h>  
 #include <CuteBuzzerSounds.h>
 #include <ESP8266mDNS.h>
 
 // Pin configuration
-const uint16_t kRecvPin = 14;  // D5 on D1 Mini (GPIO 14)
-const uint16_t kIrLedPin = 12; // D6 on D1 Mini (GPIO 12)
-#define BUZZER_PIN 13
-#define LED_PIN 2  // D4 on NodeMCU (GPIO 2)
-#define BUTTON_PIN 5  // D1 on NodeMCU (GPIO 5)
+const uint16_t kRecvPin = 14;  // IR Receiver on D5
+const uint16_t kIrLedPin = 12; // IR LED on D6
+#define BUZZER_PIN 13 // Buzzer Pin D7
+#define LED_PIN 2  // WIFI LED on D4
+#define BUTTON_PIN 5  // WIFI Reset on D1 
+
 int currentCaptureSlot = -1;
 
+// Theme of the User Interface. 
 const String backgroundColor = "#1a1a1a"; // Almost Black
 const String containerColor = "#262626"; // Dark Grey
 const String buttonColor = "#00bcd4"; // Bright Teal
@@ -87,7 +89,7 @@ void setup() {
   digitalWrite(LED_PIN, HIGH);  
   cute.play(S_MODE1);
 
-  pinMode(BUTTON_PIN, INPUT_PULLUP);  // Use internal pull-up resistor
+  pinMode(BUTTON_PIN, INPUT_PULLUP); 
 
   // Initialize SPIFFS
   if (!SPIFFS.begin()) {
@@ -112,7 +114,7 @@ void setup() {
 
    // Connect to Wi-Fi using WiFiManager
   Serial.println("Connecting to WiFi...");
-  wifiManager.autoConnect("MightyRemoteAP");  // Create an access point with the name "IRCaptureReplayAP"
+  wifiManager.autoConnect("MightyRemoteAP");  // Create an access point with the name "MightyRemoteAP"
 
   if (!MDNS.begin("mightyremote")) {
     Serial.println("Error setting up MDNS responder!");
@@ -218,7 +220,6 @@ void getSignal() {
 }
 
 void handleRoot() {
-  // HTML for the web UI with a modern and beautiful design
   String html = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">";
   html += "<title>𓃠 MightyRemote</title>";
   html += "<style>";
@@ -293,13 +294,10 @@ void handleSettings() {
   html += "<li>Used SPIFFS: " + String(usedSPIFFS) + " bytes</li>";
   html += "<li>Available SPIFFS: " + String(availableSPIFFS) + " bytes</li>";
   html += "</ul>";
-
-  // Wrap buttons in a div with class "button-group"
   html += "<div class=\"button-group\">";
   html += "<a href=\"/\"><button>Back to Main</button></a>";
   html += "<a href=\"/clear\"><button style=\"background-color:red;\">Clear SPIFFS</button></a>";
   html += "</div>";
-
   html += "<h2>Capture IR Signals</h2>";
   for (int i = 0; i < MAX_SIGNALS; i++) {
     html += "<form action=\"/saveButtonName\" method=\"POST\">";
@@ -322,6 +320,7 @@ void handleCapture(int index) {
   currentCaptureSlot = index;  // Set the current capture slot
   signalCaptured[index] = false;  // Reset the flag for this slot
   irrecv.enableIRIn();  // Enable the IR receiver
+  // IR receiver will be enebled only when capturing to ensure no stray signals are affecting the program.
   String html = "<script>alert('Listening for IR signal for slot " + String(index + 1) + "...'); window.location.href='/';</script>";
   server.send(200, "text/html", html);
 }
