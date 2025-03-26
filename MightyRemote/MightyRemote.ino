@@ -7,9 +7,10 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h>  // Include WiFiManager library
-#include <FS.h>  // Include the SPIFFS library
+#include <WiFiManager.h>  // WiFiManager library
+#include <FS.h>  
 #include <CuteBuzzerSounds.h>
+#include <ESP8266mDNS.h>
 
 // Pin configuration
 const uint16_t kRecvPin = 14;  // D5 on D1 Mini (GPIO 14)
@@ -18,16 +19,6 @@ const uint16_t kIrLedPin = 12; // D6 on D1 Mini (GPIO 12)
 #define LED_PIN 2  // D4 on NodeMCU (GPIO 2)
 #define BUTTON_PIN 5  // D1 on NodeMCU (GPIO 5)
 int currentCaptureSlot = -1;
-
-// const String backgroundColor = "#2a1a2f"; // Dark background
-// const String containerColor = "#3b1c2a"; // Slightly lighter dark container
-// const String buttonColor = "#ff7f50"; // Amber color for buttons
-// const String buttonHoverColor = "#e66a3d"; // Darker amber for hover
-// const String buttonActiveColor = "#cc5730"; // Even darker amber for active state
-// const String settingsButtonColor = "#4a4a4a"; // Dark grey for settings button
-// const String settingsButtonHoverColor = "#3d3d3d"; // Darker grey for settings button hover
-// const String settingsButtonActiveColor = "#333333"; // Even darker grey for settings button active state
-// const String textColor = "#ffffff"; // White text color
 
 const String backgroundColor = "#1a1a1a"; // Almost Black
 const String containerColor = "#262626"; // Dark Grey
@@ -52,6 +43,12 @@ const uint16_t kCaptureBufferSize = 1024;
 const uint8_t kTimeout = 15;
 const uint16_t kMinUnknownSize = 12;
 const uint8_t kTolerancePercentage = kTolerance;  // kTolerance is normally 25%
+
+// Static IP configuration
+IPAddress staticIP(192, 168, 1, 100);  // Set your desired static IP address
+IPAddress gateway(192, 168, 1, 1);     // Set your gateway IP address
+IPAddress subnet(255, 255, 255, 0);    // Set your subnet mask
+IPAddress dns(8, 8, 8, 8);          
 
 IRrecv irrecv(kRecvPin, kCaptureBufferSize, kTimeout, true);  // IR receiver
 IRsend irsend(kIrLedPin);  // IR sender
@@ -82,10 +79,13 @@ void setup() {
 
   Serial.println("IR Capture and Replay Ready");
   cute.init(BUZZER_PIN);
+  
+ 
 
   // Initialize LED pin
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);  
+  cute.play(S_MODE1);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);  // Use internal pull-up resistor
 
@@ -107,9 +107,18 @@ void setup() {
 
   loadButtonNamesFromSPIFFS();
 
+  // Set static IP configuration
+  wifiManager.setSTAStaticIPConfig(staticIP, gateway, subnet, dns);
+
    // Connect to Wi-Fi using WiFiManager
   Serial.println("Connecting to WiFi...");
   wifiManager.autoConnect("MightyRemoteAP");  // Create an access point with the name "IRCaptureReplayAP"
+
+  if (!MDNS.begin("mightyremote")) {
+    Serial.println("Error setting up MDNS responder!");
+  } else {
+    Serial.println("mDNS responder started. Access at mightyremote.local");
+  }
 
   Serial.println("Connected to WiFi");
   Serial.println(WiFi.localIP());
@@ -143,6 +152,7 @@ for (int i = 0; i < MAX_SIGNALS; i++) {
 
 void loop() {
   server.handleClient();  // Handle client requests
+  MDNS.update();
   getSignal();  // Check for IR signals
 
   // Check WiFi connection status and control LED
@@ -328,8 +338,39 @@ void handleReplay(int index) {
       case decode_type_t::SAMSUNG:
         irsend.sendSAMSUNG(capturedSignals[index].value, capturedSignals[index].bits);
         break;
+      case decode_type_t::COOLIX:
+        irsend.sendCOOLIX(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::LG:
+        irsend.sendLG(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::KELON:
+        irsend.sendKelon(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::SONY:
+        irsend.sendSony(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::PANASONIC:
+        irsend.sendPanasonic(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::MITSUBISHI:
+        irsend.sendMitsubishi(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::SHARP:
+        irsend.sendSharp(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::RC5:
+        irsend.sendRC5(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::NEC:
+        irsend.sendNEC(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
+      case decode_type_t::NIKAI:
+        irsend.sendNikai(capturedSignals[index].value, capturedSignals[index].bits);
+        break;
       default:
         Serial.println("Unsupported protocol for replay.");
+        playCuteErrorChirp();
         break;
     }
     Serial.println("Signal replayed!");
@@ -338,6 +379,7 @@ void handleReplay(int index) {
   } else {
     String html = "<script>alert('No saved signal in slot " + String(index + 1) + "!'); window.location.href='/';</script>";
     Serial.print("No IR signal captured yet in slot ");
+    playCuteErrorChirp();
     cute.play(S_SLEEPING); 
     Serial.println(index);
     server.send(200, "text/html", html);
@@ -435,5 +477,24 @@ void loadButtonNamesFromSPIFFS() {
     }
     saveButtonNamesToSPIFFS();  // Save the default names to SPIFFS
   }
+}
+
+void playCuteErrorChirp() {
+  for (int i = 0; i < 5; i++) {
+    tone(BUZZER_PIN, 1200, 50); // 1200 Hz for 50 ms
+    delay(100); // 50 ms tone + 50 ms gap
+  }
+  noTone(BUZZER_PIN);
+}
+
+// Startup Sounds
+void playHappyChime() {
+  tone(BUZZER_PIN, 784, 100); // G5
+  delay(150);
+  tone(BUZZER_PIN, 988, 100); // B5
+  delay(150);
+  tone(BUZZER_PIN, 1319, 100); // E6
+  delay(100);
+  noTone(BUZZER_PIN);
 }
 
