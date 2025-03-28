@@ -110,7 +110,8 @@ void setup() {
   loadButtonNamesFromSPIFFS();
 
   // Set static IP configuration
-  wifiManager.setSTAStaticIPConfig(staticIP, gateway, subnet, dns);
+  // commented this for now since there's an issue when connecting to hotspots.
+  // wifiManager.setSTAStaticIPConfig(staticIP, gateway, subnet, dns);
 
    // Connect to Wi-Fi using WiFiManager
   Serial.println("Connecting to WiFi...");
